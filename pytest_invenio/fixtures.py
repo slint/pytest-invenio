@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 #
 # This file is part of pytest-invenio.
-# Copyright (C) 2017-2018 CERN.
+# Copyright (C) 2017-2019 CERN.
 # Copyright (C) 2018 Esteban J. G. Garbancho.
 #
 # pytest-invenio is free software; you can redistribute it and/or modify it
@@ -196,6 +196,8 @@ def app_config(db_uri, broker_uri, celery_config_ext):
         TESTING=True,
         # Disable CRSF protection in WTForms
         WTF_CSRF_ENABLED=False,
+        # Invenio Cache Config
+        CACHE_TYPE='redis',
         # Celery configuration
         **celery_config_ext
     )
@@ -554,3 +556,69 @@ def _get_screenshots_dir():
     if not os.path.exists(directory):
         os.makedirs(directory)
     return directory
+
+
+@pytest.fixture(scope='module')
+def inv_cache(appctx):
+    """Setup Invenio Cache fixture.
+
+    Scope: Module
+
+    This fixture creates an invenio-cache instance that uses Redis.
+    """
+    from invenio_cache import current_cache
+    return current_cache
+
+
+@pytest.fixture(scope='function')
+def inv_cache_clear(inv_cache, app_config):
+    """Setup Invenio cache fixture and clear keys after use.
+
+    Scope: Function
+
+    This fixture creates an invenio-cache instance and clears all keys
+    that are managed by the cache instance that start with CACHE_KEY_PREFIX.
+    By default this fixture uses the `cache::` prefix, to set a `custom_key::`
+    prefix add the following to your test file:
+
+    .. code-block:: python
+
+        @pytest.fixture(scope='module')
+        def app_config(app_config):
+            app_config['CACHE_KEY_PREFIX'] = 'custom_key'
+            return app_config
+    """
+    yield inv_cache
+
+    from redis import Redis
+    redis_client = Redis()
+
+    print(app_config)
+
+    prefix = app_config.get('CACHE_KEY_PREFIX', 'cache::')
+    keys = redis_client.keys(pattern=prefix + '*')
+    num_deleted = redis_client.delete(*keys)
+
+    if (num_deleted != len(keys)):
+        msg = "Could not delete {} of {} keys".format(keys - num_deleted, keys)
+        raise RuntimeError(msg)
+
+
+@pytest.fixture(scope='module')
+def inv_cache_flush(inv_cache):
+    """Setup Invenio cache fixture and flush redis after use.
+
+    Scope: Module
+
+    This fixture creates an invenio-cache instance and flushes
+    the connected Redis database after all tests finish.
+
+    **WARNING** This fixture flushes the _entire_ database.
+    To clear keys that are managed by the cache, checkout:
+    inv_cache_clear
+    """
+    yield inv_cache
+
+    from redis import Redis
+    redis_client = Redis()
+    redis_client.flushdb()
